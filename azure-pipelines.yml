@@ -8,9 +8,9 @@ pool:
 
 variables:
   SQLSERVER: 'preethampreethamhw8server.database.windows.net'
-  DBNAME: 'HW8PipelineDB'                       # change this
-  SQLUSER: 'preetham'
-  SQLPASSWORD: 'Password123!'
+  DBNAME: 'HW8PipelineDB'
+  SQLUSER: '$(SQLUSER)'          # set in DevOps Variables (secret)
+  SQLPASSWORD: '$(SQLPASSWORD)'  # set in DevOps Variables (secret)
 
 steps:
 - checkout: self
@@ -20,31 +20,52 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
-      & sqlcmd -S "tcp:$(SQLSERVER),1433" -d "$(DBNAME)" -U "$(SQLUSER)" -P "$(SQLPASSWORD)" -b -i "$(Build.SourcesDirectory)\sql\01_create_tables.sql"
+      $server = "$(SQLSERVER)"
+      $db = "$(DBNAME)"
+      $user = "$(SQLUSER)"
+      $pwd  = "$(SQLPASSWORD)"
+      $sql  = "$(Build.SourcesDirectory)\sql\01_create_tables.sql"
+      & sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -b -i $sql
 
 - task: PowerShell@2
   displayName: 'Load BrandDetail via bcp'
   inputs:
     targetType: 'inline'
     script: |
-      & bcp "$(DBNAME).dbo.BrandDetail" in "$(Build.SourcesDirectory)\data\brand-detail-url-etc_0_0_0.csv" -S $(SQLSERVER) -U $(SQLUSER) -P $(SQLPASSWORD) -c -t "," -r "\n" -F 2 -q
+      $server = "$(SQLSERVER)"
+      $db = "$(DBNAME)"
+      $user = "$(SQLUSER)"
+      $pwd  = "$(SQLPASSWORD)"
+      $file = "$(Build.SourcesDirectory)\data\brand-detail-url-etc_0_0_0.csv"
+      & bcp "$db.dbo.BrandDetail" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
 
 - task: PowerShell@2
   displayName: 'Load ConsumerSpendDaily via bcp'
   inputs:
     targetType: 'inline'
     script: |
-      & bcp "$(DBNAME).dbo.ConsumerSpendDaily" in "$(Build.SourcesDirectory)\data\2021-01-19--data_01be88c2-0306-48b3-0042-fa0703282ad6_1304_5_0.csv" -S $(SQLSERVER) -U $(SQLUSER) -P $(SQLPASSWORD) -c -t "," -r "\n" -F 2 -q
+      $server = "$(SQLSERVER)"
+      $db = "$(DBNAME)"
+      $user = "$(SQLUSER)"
+      $pwd  = "$(SQLPASSWORD)"
+      $file = "$(Build.SourcesDirectory)\data\2021-01-19--data_01be88c2-0306-48b3-0042-fa0703282ad6_1304_5_0.csv"
+      & bcp "$db.dbo.ConsumerSpendDaily" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
 
 - task: PowerShell@2
   displayName: 'Verify data loaded'
   inputs:
     targetType: 'inline'
     script: |
+      $server = "$(SQLSERVER)"
+      $db = "$(DBNAME)"
+      $user = "$(SQLUSER)"
+      $pwd  = "$(SQLPASSWORD)"
       $q = @"
-      SELECT 'BrandDetail' tbl, COUNT(*) rows FROM dbo.BrandDetail;
-      SELECT 'ConsumerSpendDaily' tbl, COUNT(*) rows FROM dbo.ConsumerSpendDaily;
-      SELECT TOP 5 STATE_ABBR, SUM(SPEND_AMOUNT) TotalSpend
-      FROM dbo.ConsumerSpendDaily GROUP BY STATE_ABBR ORDER BY TotalSpend DESC;
+      SELECT 'BrandDetail' AS TableName, COUNT(*) AS Rows FROM dbo.BrandDetail;
+      SELECT 'ConsumerSpendDaily' AS TableName, COUNT(*) AS Rows FROM dbo.ConsumerSpendDaily;
+      SELECT TOP 5 STATE_ABBR, SUM(SPEND_AMOUNT) AS TotalSpend
+      FROM dbo.ConsumerSpendDaily
+      GROUP BY STATE_ABBR
+      ORDER BY TotalSpend DESC;
 "@
-      & sqlcmd -S "tcp:$(SQLSERVER),1433" -d "$(DBNAME)" -U "$(SQLUSER)" -P "$(SQLPASSWORD)" -Q $q -W -s ","
+      & sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -Q $q -W -s ","
