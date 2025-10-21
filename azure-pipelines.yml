@@ -4,72 +4,44 @@ trigger:
       - main
 
 pool:
-  vmImage: 'windows-latest'
+  vmImage: 'ubuntu-latest'
 
 variables:
-  SQLSERVER: 'preethampreethamhw8server.database.windows.net'
-  DBNAME: 'HW8PipelineDB'
-  SQLUSER: 'preetham'         # you can keep these hardcoded or switch to $(SQLUSER)/$(SQLPASSWORD)
-  SQLPASSWORD: 'Password123!' # if you switch, add secret variables in DevOps
+  SQLSERVER: 'preethampreethamhw8server.database.windows.net'   # <— yours
+  DBNAME: 'HW8PipelineDB'                                      # <— yours
+  SQLUSER: '$(SQLUSER)'                                        # add in DevOps Variables
+  SQLPASSWORD: '$(SQLPASSWORD)'                                # add in DevOps Variables (secret)
 
 steps:
 - checkout: self
 
-# 1) Create tables
-- task: PowerShell@2
-  displayName: 'Create tables'
-  inputs:
-    targetType: 'inline'
-    script: |
-      $server = "$(SQLSERVER)"
-      $db = "$(DBNAME)"
-      $user = "$(SQLUSER)"
-      $pwd  = "$(SQLPASSWORD)"
-      $sql  = "$(Build.SourcesDirectory)\sql\01_create_tables.sql"
-      sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -b -i $sql
+# Install Microsoft ODBC Driver 18 for SQL Server + build deps
+- script: |
+    set -e
+    sudo apt-get update
+    sudo apt-get install -y curl gnupg apt-transport-https
+    curl https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+    curl https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list
+    sudo apt-get update
+    sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 unixodbc-dev
+    python3 -m pip install --upgrade pip
+    python3 -m pip install pandas sqlalchemy pyodbc
+  displayName: 'Install ODBC driver and Python libs'
 
-# 2) Load BrandDetail
-- task: PowerShell@2
-  displayName: 'Load BrandDetail via bcp'
-  inputs:
-    targetType: 'inline'
-    script: |
-      $server = "$(SQLSERVER)"
-      $db = "$(DBNAME)"
-      $user = "$(SQLUSER)"
-      $pwd  = "$(SQLPASSWORD)"
-      $file = "$(Build.SourcesDirectory)\data\brand-detail-url-etc_0_0_0.csv"
-      bcp "$db.dbo.BrandDetail" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
+# (Optional) show installed drivers
+- script: |
+    python3 - << 'PY'
+    import pyodbc
+    print("Drivers:", pyodbc.drivers())
+    PY
+  displayName: 'Check available ODBC drivers'
 
-# 3) Load ConsumerSpendDaily
-- task: PowerShell@2
-  displayName: 'Load ConsumerSpendDaily via bcp'
-  inputs:
-    targetType: 'inline'
-    script: |
-      $server = "$(SQLSERVER)"
-      $db = "$(DBNAME)"
-      $user = "$(SQLUSER)"
-      $pwd  = "$(SQLPASSWORD)"
-      $file = "$(Build.SourcesDirectory)\data\2021-01-19--data_01be88c2-0306-48b3-0042-fa0703282ad6_1304_5_0.csv"
-      bcp "$db.dbo.ConsumerSpendDaily" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
-
-# 4) Verify load
-- task: PowerShell@2
-  displayName: 'Verify data loaded'
-  inputs:
-    targetType: 'inline'
-    script: |
-      $server = "$(SQLSERVER)"
-      $db = "$(DBNAME)"
-      $user = "$(SQLUSER)"
-      $pwd  = "$(SQLPASSWORD)"
-      $q = @"
-      SELECT 'BrandDetail' AS TableName, COUNT(*) AS Rows FROM dbo.BrandDetail;
-      SELECT 'ConsumerSpendDaily' AS TableName, COUNT(*) AS Rows FROM dbo.ConsumerSpendDaily;
-      SELECT TOP 5 STATE_ABBR, SUM(SPEND_AMOUNT) AS TotalSpend
-      FROM dbo.ConsumerSpendDaily
-      GROUP BY STATE_ABBR
-      ORDER BY TotalSpend DESC;
-"@
-      sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -Q $q -W -s ","
+# Run the loader
+- script: |
+    python3 load_data.py
+  displayName: 'Load CSV data into Azure SQL'
+  env:
+    AZ_SQLSERVER: $(SQLSERVER)
+    AZ_DBNAME: $(DBNAME)
+    AZ_SQLUSER: $(SQLUSER)
+    AZ_SQLPASSWORD: $(SQLPASSWORD)
