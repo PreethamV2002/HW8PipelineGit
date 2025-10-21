@@ -56,6 +56,17 @@ BEGIN
 END;
 """
 
+WIDEN = """
+IF COL_LENGTH('dbo.BrandDetail','BRAND_NAME')       < 400 ALTER TABLE dbo.BrandDetail ALTER COLUMN BRAND_NAME NVARCHAR(400) NULL;
+IF COL_LENGTH('dbo.BrandDetail','BRAND_TYPE')       < 100 ALTER TABLE dbo.BrandDetail ALTER COLUMN BRAND_TYPE NVARCHAR(100) NULL;
+IF COL_LENGTH('dbo.BrandDetail','BRAND_URL_ADDR')   < 1000 ALTER TABLE dbo.BrandDetail ALTER COLUMN BRAND_URL_ADDR NVARCHAR(1000) NULL;
+IF COL_LENGTH('dbo.BrandDetail','INDUSTRY_NAME')    < 200 ALTER TABLE dbo.BrandDetail ALTER COLUMN INDUSTRY_NAME NVARCHAR(200) NULL;
+IF COL_LENGTH('dbo.BrandDetail','SUBINDUSTRY_NAME') < 200 ALTER TABLE dbo.BrandDetail ALTER COLUMN SUBINDUSTRY_NAME NVARCHAR(200) NULL;
+"""
+with engine.begin() as conn:
+    conn.exec_driver_sql(WIDEN)
+
+
 with engine.begin() as conn:
     conn.exec_driver_sql(DDL)
 
