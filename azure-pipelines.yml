@@ -9,12 +9,13 @@ pool:
 variables:
   SQLSERVER: 'preethampreethamhw8server.database.windows.net'
   DBNAME: 'HW8PipelineDB'
-  SQLUSER: 'preetham'          # set in DevOps Variables (secret)
-  SQLPASSWORD: 'Password123!'  # set in DevOps Variables (secret)
+  SQLUSER: 'preetham'         # you can keep these hardcoded or switch to $(SQLUSER)/$(SQLPASSWORD)
+  SQLPASSWORD: 'Password123!' # if you switch, add secret variables in DevOps
 
 steps:
 - checkout: self
 
+# 1) Create tables
 - task: PowerShell@2
   displayName: 'Create tables'
   inputs:
@@ -25,8 +26,9 @@ steps:
       $user = "$(SQLUSER)"
       $pwd  = "$(SQLPASSWORD)"
       $sql  = "$(Build.SourcesDirectory)\sql\01_create_tables.sql"
-      & sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -b -i $sql
+      sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -b -i $sql
 
+# 2) Load BrandDetail
 - task: PowerShell@2
   displayName: 'Load BrandDetail via bcp'
   inputs:
@@ -37,8 +39,9 @@ steps:
       $user = "$(SQLUSER)"
       $pwd  = "$(SQLPASSWORD)"
       $file = "$(Build.SourcesDirectory)\data\brand-detail-url-etc_0_0_0.csv"
-      & bcp "$db.dbo.BrandDetail" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
+      bcp "$db.dbo.BrandDetail" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
 
+# 3) Load ConsumerSpendDaily
 - task: PowerShell@2
   displayName: 'Load ConsumerSpendDaily via bcp'
   inputs:
@@ -49,8 +52,9 @@ steps:
       $user = "$(SQLUSER)"
       $pwd  = "$(SQLPASSWORD)"
       $file = "$(Build.SourcesDirectory)\data\2021-01-19--data_01be88c2-0306-48b3-0042-fa0703282ad6_1304_5_0.csv"
-      & bcp "$db.dbo.ConsumerSpendDaily" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
+      bcp "$db.dbo.ConsumerSpendDaily" in "$file" -S $server -U $user -P $pwd -c -t "," -r "\n" -F 2 -q
 
+# 4) Verify load
 - task: PowerShell@2
   displayName: 'Verify data loaded'
   inputs:
@@ -68,4 +72,4 @@ steps:
       GROUP BY STATE_ABBR
       ORDER BY TotalSpend DESC;
 "@
-      & sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -Q $q -W -s ","
+      sqlcmd -S "tcp:$server,1433" -d $db -U $user -P $pwd -Q $q -W -s ","
