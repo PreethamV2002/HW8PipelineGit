@@ -1,11 +1,12 @@
 # load_data.py
-# Ingests two CSVs into Azure SQL with safe column sizes and idempotent loads.
+# Loads two CSVs into Azure SQL. Creates tables if missing, widens columns,
+# truncates for idempotent re-runs, then bulk-inserts and prints row counts.
 
 import os
 import pandas as pd
 import sqlalchemy as sa
 
-# ---------- Config (injected by the pipeline as env vars) ----------
+# ---------- Config provided by the pipeline (env vars) ----------
 SERVER   = os.environ["AZ_SQLSERVER"]      # e.g., preethampreethamhw8server.database.windows.net
 DATABASE = os.environ["AZ_DBNAME"]         # e.g., HW8PipelineDB
 UID      = os.environ["AZ_SQLUSER"]        # e.g., preetham
@@ -30,8 +31,8 @@ engine = sa.create_engine(
     fast_executemany=True,
 )
 
-# ---------- DDL: create tables if missing ----------
-DDL = """
+# ---------- Create tables if they don't exist ----------
+DDL_CREATE = """
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name='ConsumerSpendDaily' AND schema_id = SCHEMA_ID('dbo'))
 BEGIN
   CREATE TABLE dbo.ConsumerSpendDaily(
@@ -59,68 +60,57 @@ BEGIN
 END;
 """
 with engine.begin() as conn:
-    conn.exec_driver_sql(DDL)
+    conn.exec_driver_sql(DDL_CREATE)
 
-# ---------- WIDEN columns defensively (prevents truncation errors) ----------
-# If tables already exist with smaller sizes, widen them.
-WIDEN = """
-IF COL_LENGTH('dbo.BrandDetail','BRAND_NAME')       < 400 ALTER TABLE dbo.BrandDetail ALTER COLUMN BRAND_NAME NVARCHAR(400) NULL;
-IF COL_LENGTH('dbo.BrandDetail','BRAND_TYPE')       < 100 ALTER TABLE dbo.BrandDetail ALTER COLUMN BRAND_TYPE NVARCHAR(100) NULL;
-IF COL_LENGTH('dbo.BrandDetail','BRAND_URL_ADDR')   IS NOT NULL AND
-   (SELECT MAX(D.character_maximum_length) FROM INFORMATION_SCHEMA.COLUMNS D
-     WHERE D.TABLE_SCHEMA='dbo' AND D.TABLE_NAME='BrandDetail' AND D.COLUMN_NAME='BRAND_URL_ADDR') < -1
-BEGIN
-    -- no-op (already MAX)
-END
-ELSE
-    ALTER TABLE dbo.BrandDetail ALTER COLUMN BRAND_URL_ADDR NVARCHAR(MAX) NULL;
+# ---------- Widen columns (always safe; idempotent) ----------
+DDL_WIDEN = """
+ALTER TABLE dbo.BrandDetail       ALTER COLUMN BRAND_NAME         NVARCHAR(400)    NULL;
+ALTER TABLE dbo.BrandDetail       ALTER COLUMN BRAND_TYPE         NVARCHAR(100)    NULL;
+ALTER TABLE dbo.BrandDetail       ALTER COLUMN BRAND_URL_ADDR     NVARCHAR(MAX)    NULL;
+ALTER TABLE dbo.BrandDetail       ALTER COLUMN INDUSTRY_NAME      NVARCHAR(200)    NULL;
+ALTER TABLE dbo.BrandDetail       ALTER COLUMN SUBINDUSTRY_NAME   NVARCHAR(200)    NULL;
 
-IF COL_LENGTH('dbo.BrandDetail','INDUSTRY_NAME')    < 200 ALTER TABLE dbo.BrandDetail ALTER COLUMN INDUSTRY_NAME NVARCHAR(200) NULL;
-IF COL_LENGTH('dbo.BrandDetail','SUBINDUSTRY_NAME') < 200 ALTER TABLE dbo.BrandDetail ALTER COLUMN SUBINDUSTRY_NAME NVARCHAR(200) NULL;
-
-IF COL_LENGTH('dbo.ConsumerSpendDaily','BRAND_NAME') < 400 ALTER TABLE dbo.ConsumerSpendDaily ALTER COLUMN BRAND_NAME NVARCHAR(400) NULL;
-IF COL_LENGTH('dbo.ConsumerSpendDaily','STATE_ABBR') < 50  ALTER TABLE dbo.ConsumerSpendDaily ALTER COLUMN STATE_ABBR NVARCHAR(50)  NULL;
+ALTER TABLE dbo.ConsumerSpendDaily ALTER COLUMN BRAND_NAME        NVARCHAR(400)    NULL;
+ALTER TABLE dbo.ConsumerSpendDaily ALTER COLUMN STATE_ABBR        NVARCHAR(50)     NULL;
 """
 with engine.begin() as conn:
-    conn.exec_driver_sql(WIDEN)
+    conn.exec_driver_sql(DDL_WIDEN)
 
-# ---------- Load CSVs with pandas ----------
-# Read robustly (UTF-8), leave blanks as NaN (good for NULL)
+# ---------- Read CSVs ----------
 brand_df = pd.read_csv(BRAND_CSV, encoding="utf-8")
 daily_df = pd.read_csv(DAILY_CSV, encoding="utf-8")
 
-# Normalize column names (strip spaces)
+# Normalize column names
 brand_df.columns = [c.strip() for c in brand_df.columns]
 daily_df.columns = [c.strip() for c in daily_df.columns]
 
-# Optional: coerce dates if present as strings
+# Coerce dates if present
 for col in ("TRANS_DATE", "VERSION"):
     if col in daily_df.columns:
         daily_df[col] = pd.to_datetime(daily_df[col], errors="coerce")
 
-# ---------- Make loads idempotent ----------
+# ---------- Idempotent loads: truncate then insert ----------
 with engine.begin() as conn:
     conn.exec_driver_sql("TRUNCATE TABLE dbo.BrandDetail;")
     conn.exec_driver_sql("TRUNCATE TABLE dbo.ConsumerSpendDaily;")
 
-# ---------- Bulk insert ----------
+# Bulk insert
 brand_df.to_sql("BrandDetail", con=engine, schema="dbo", if_exists="append", index=False, chunksize=5000)
 daily_df.to_sql("ConsumerSpendDaily", con=engine, schema="dbo", if_exists="append", index=False, chunksize=5000)
 
-# ---------- Smoke tests ----------
+# ---------- Smoke checks ----------
 with engine.begin() as conn:
     print("Counts:")
-    for sql in [
-        "SELECT 'BrandDetail' AS TableName, COUNT(*) AS Rows FROM dbo.BrandDetail",
-        "SELECT 'ConsumerSpendDaily' AS TableName, COUNT(*) AS Rows FROM dbo.ConsumerSpendDaily",
-        """
+    rows = conn.exec_driver_sql("SELECT 'BrandDetail' AS TableName, COUNT(*) AS Rows FROM dbo.BrandDetail").fetchall()
+    print(rows)
+    rows = conn.exec_driver_sql("SELECT 'ConsumerSpendDaily' AS TableName, COUNT(*) AS Rows FROM dbo.ConsumerSpendDaily").fetchall()
+    print(rows)
+    rows = conn.exec_driver_sql("""
         SELECT TOP 5 STATE_ABBR, SUM(SPEND_AMOUNT) AS TotalSpend
         FROM dbo.ConsumerSpendDaily
         GROUP BY STATE_ABBR
         ORDER BY TotalSpend DESC
-        """
-    ]:
-        rows = conn.exec_driver_sql(sql).fetchall()
-        print(sql.splitlines()[0].strip(), "->", rows)
+    """).fetchall()
+    print("Top states by spend (top 5):", rows)
 
 print("Load complete ✅")
