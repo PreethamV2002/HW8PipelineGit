@@ -9,8 +9,8 @@ pool:
 variables:
   SQLSERVER: 'preethampreethamhw8server.database.windows.net'
   DBNAME: 'HW8PipelineDB'
-  SQLUSER: '$(SQLUSER)'          # set in DevOps Variables (secret)
-  SQLPASSWORD: '$(SQLPASSWORD)'  # set in DevOps Variables (secret)
+  SQLUSER: 'preetham'          # set in DevOps Variables (secret)
+  SQLPASSWORD: 'Password123!'  # set in DevOps Variables (secret)
 
 steps:
 - checkout: self
