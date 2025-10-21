@@ -9,8 +9,8 @@ pool:
 variables:
   SQLSERVER: 'preethampreethamhw8server.database.windows.net'
   DBNAME: 'HW8PipelineDB'                       # change this
-  SQLUSER: '$(SQLUSER)'
-  SQLPASSWORD: '$(SQLPASSWORD)'
+  SQLUSER: 'preetham'
+  SQLPASSWORD: 'Password123!'
 
 steps:
 - checkout: self
